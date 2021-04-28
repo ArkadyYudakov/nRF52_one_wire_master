@@ -11,36 +11,35 @@
 #include "ow_master_hal.h"	
 #include "ow_master.h"
 
+/**
+ * 1-wire master states
+ */
 typedef enum
 {
-	OWM_STATE_IDLE,
-	OWM_STATE_RESET,
-	OWM_STATE_COMMAND,
-	OWM_STATE_ROM,
-	OWM_STATE_DATA,
-	OWM_STATE_HOLD_POWER,
-	OWM_STATE_WAIT_FLAG,
+	OWM_STATE_IDLE,                  //*< Idle. Driver ready to process next packet               */
+	OWM_STATE_RESET,                 //*< Reset signal on 1-wire bus.                             */
+	OWM_STATE_COMMAND,               //*< transmitting ROM command, first byte after reset        */
+	OWM_STATE_ROM,                   //*< transmitting 8 bytes of ROM address                     */     
+	OWM_STATE_DATA,                  //*< transmitting and reseaving data bits                    */  
 #ifdef OW_ROM_SEARCH_SUPPORT
-	OWM_STATE_SEARCH_POLL,
-	OWM_STATE_SEARCH_DIR,
+	OWM_STATE_SEARCH_POLL0,          //*< reading first bit of complement pair in search process  */
+	OWM_STATE_SEARCH_POLL1,          //*< reading second bit of complement pair in search process */
+	OWM_STATE_SEARCH_DIR,            //*< writing direction bit  in search process                */
 #endif
-	OWM_WAIT_FLAG,
-	OWM_DELAY,
+	OWM_STATE_WAIT_FLAG,             //*< reading until '1' readed or time-out riached            */
+	OWM_STATE_DELAY,
 #if defined OW_PARASITE_POWER_SUPPORT
-	OWM_POWER_HOLD,
+	OWM_STATE_HOLD_POWER,            //*< holding data line in power supplying state              */
 #endif	
-	OWM_STATE_NOT_INITIALIZED
+	OWM_STATE_NOT_INITIALIZED        //*< Driver in non-working state until initialized           */
 } owm_state_t;
 
-static owm_state_t   m_ow_master_state = OWM_STATE_NOT_INITIALIZED;
-static ow_packet_t*    m_p_ow_packet;
-static uint8_t       m_command_buf;
+static owm_state_t   m_ow_master_state = OWM_STATE_NOT_INITIALIZED;  //*< 1-wire master fsm state */
+static ow_packet_t*  m_p_ow_packet;       //*< ptr to 1-wire packet under processing              */
 
-static ow_master_callback_t  m_callback;
+static ow_master_callback_t  m_callback;  //*< callback after packet processed                    */
 
 // Default callback. Used if no other registered. 
-// Driver nvoks packet callback if defined at the end of 1-wire packet exchange procedure.
-// If callback function returns not 0, driver retransmits packed again.
 static void owm_default_callback(ow_result_t  result, ow_packet_t* p_packet)
 {
 	if ((p_packet->callback)&&(p_packet->callback(result, p_packet) != 0))
@@ -52,9 +51,7 @@ static void owm_default_callback(ow_result_t  result, ow_packet_t* p_packet)
 // forward declaration.
 static void owm_fsm(owmh_callback_result_t result);
 
-// 1-Wire master driver initialization. 
-// Registering callback of higher level module.
-// Callback invoks after packet transfer completion.
+//1-Wire master driver initialization. 
 void ow_master_initialize(ow_master_callback_t callback)
 {
 	CHECK_ERROR_BOOL(m_ow_master_state == OWM_STATE_NOT_INITIALIZED);
@@ -68,8 +65,7 @@ void ow_master_initialize(ow_master_callback_t callback)
 	m_ow_master_state = OWM_STATE_IDLE;
 }
 
-// 1-Wire master driver uninitialization. 
-// If success, returns 0. If driver is busy, returns 1.
+//1-Wire master driver uninitialization.
 uint32_t ow_master_uninitialize()
 {
 	if ((m_ow_master_state == OWM_STATE_IDLE)&&(owm_hal_uninitialize() == 0))
@@ -81,7 +77,7 @@ uint32_t ow_master_uninitialize()
 		return 1;
 }
 
-// 1-Wire packet transferring. 
+// Processing 1-wire packet
 void ow_process_packet(ow_packet_t* p_ow_packet)
 {
 	// Check, if previos process completed
@@ -104,12 +100,13 @@ static void ow_packet_terminate(ow_result_t result)
 	m_callback(result, (void*)m_p_ow_packet);
 }
 
-// Main state machine procedure. Registered as callback in 1-Wire HAL module.
-// Invoked after completion of the 1-Wire HAL primitive
+// 1-Wire master driver state machine procedure.
+// Invoking as callback after completion of 1-wire HAL operation
 static void owm_fsm(owmh_callback_result_t result)
 {
 #ifdef OW_ROM_SEARCH_SUPPORT
-	// Static variables for searching process
+	// variables for searching process
+	static uint8_t poll_bit_0;
 	static uint8_t crc8;
 	static uint8_t bit_number;
 	static uint8_t byte_index;
@@ -128,8 +125,7 @@ static void owm_fsm(owmh_callback_result_t result)
 		{
 			// set COMMAND state, transfer 1 WIRE ROM COMMAND
 			m_ow_master_state = OWM_STATE_COMMAND;
-			m_command_buf = (uint8_t)m_p_ow_packet->ROM_command;
-			owmh_sequence(&m_command_buf, NULL, 8, 0);
+			owmh_sequence(&m_p_ow_packet->ROM_command, NULL, 8, 0);
 		}
 		else if (result == OWMHCR_RESET_NO_RESPONCE)
 			// no devices on bus
@@ -145,7 +141,7 @@ static void owm_fsm(owmh_callback_result_t result)
 //----------------------------------------------------------------------------------------------------------------	
 // on completion of ROM command fase (first byte after reset).
 	case OWM_STATE_COMMAND:
-		if (result == OWMHCR_PACKET_OK)
+		if (result == OWMHCR_SEQUENCE_OK)
 		{
 			// prepare and transfer packet depanding on ROM command
 			switch (m_p_ow_packet->ROM_command)
@@ -188,8 +184,8 @@ static void owm_fsm(owmh_callback_result_t result)
 					last_family_zero  = 0;
 					m_p_ow_packet->search.consistency_fault = false;
 					// polling of direct and complement bits at next position (first in this case) 
-					m_ow_master_state = OWM_STATE_SEARCH_POLL;
-					owmh_poll();
+					m_ow_master_state = OWM_STATE_SEARCH_POLL0;
+					owmh_read();
 				}
 				break;
 #endif
@@ -208,7 +204,7 @@ static void owm_fsm(owmh_callback_result_t result)
 //----------------------------------------------------------------------------------------------------------------	
 // on completion of ROM address trnsmitting fase.
 	case OWM_STATE_ROM :
-		if (result == OWMHCR_PACKET_OK)
+		if (result == OWMHCR_SEQUENCE_OK)
 		{
 			// transfer data
 			m_ow_master_state = OWM_STATE_DATA;
@@ -227,7 +223,7 @@ static void owm_fsm(owmh_callback_result_t result)
 //----------------------------------------------------------------------------------------------------------------	
 // on completion of data transferring fase.
 	case OWM_STATE_DATA :
-		if (result == OWMHCR_PACKET_OK)
+		if (result == OWMHCR_SEQUENCE_OK)
 		{
 			// finishing of packet processing depanding on ROM command
 			switch (m_p_ow_packet->ROM_command)
@@ -244,7 +240,7 @@ static void owm_fsm(owmh_callback_result_t result)
 #if defined OW_PARASITE_POWER_SUPPORT
 					if (m_p_ow_packet->hold_power)
 					{
-						m_ow_master_state = OWM_POWER_HOLD;
+						m_ow_master_state = OWM_STATE_HOLD_POWER;
 						owmh_hold_power(m_p_ow_packet->delay_ms);
 					}
 					else if (m_p_ow_packet->wait_flag)
@@ -252,12 +248,12 @@ static void owm_fsm(owmh_callback_result_t result)
 					if (m_p_ow_packet->wait_flag)
 #endif
 					{
-						m_ow_master_state = OWM_WAIT_FLAG;
+						m_ow_master_state = OWM_STATE_WAIT_FLAG;
 						owmh_wait_flag(m_p_ow_packet->delay_ms);
 					}
 					else
 					{
-						m_ow_master_state = OWM_DELAY;
+						m_ow_master_state = OWM_STATE_DELAY;
 						owmh_delay(m_p_ow_packet->delay_ms);
 					}
 				}
@@ -282,7 +278,7 @@ static void owm_fsm(owmh_callback_result_t result)
 #if defined OW_PARASITE_POWER_SUPPORT
 //----------------------------------------------------------------------------------------------------------------	
 // on completion of holding forced positive state on 1 wire bus data line
-	case OWM_POWER_HOLD :
+	case OWM_STATE_HOLD_POWER :
 		if(result == OWMHCR_WAIT_OK)
 			// no errors
 			ow_packet_terminate(OWMR_SUCCESS);
@@ -296,7 +292,7 @@ static void owm_fsm(owmh_callback_result_t result)
 #endif
 //----------------------------------------------------------------------------------------------------------------	
 // after flag reading procedure.   
-	case OWM_WAIT_FLAG :
+	case OWM_STATE_WAIT_FLAG :
 		if(result == OWMHCR_FLAG_OK)
 			// flag resived before time out
 			ow_packet_terminate(OWMR_SUCCESS);
@@ -312,7 +308,7 @@ static void owm_fsm(owmh_callback_result_t result)
 		break;
 //----------------------------------------------------------------------------------------------------------------	
 // after simple delay procedure.
-	case OWM_DELAY :
+	case OWM_STATE_DELAY :
 		if(result == OWMHCR_WAIT_OK)
 			// no errors
 			ow_packet_terminate(OWMR_SUCCESS);
@@ -325,73 +321,96 @@ static void owm_fsm(owmh_callback_result_t result)
 		break;
 #ifdef OW_ROM_SEARCH_SUPPORT
 //----------------------------------------------------------------------------------------------------------------	
-// processing of next pair of complement bits in searching process   
-	case OWM_STATE_SEARCH_POLL :
-		critical_consistency_error = false;
-		if(result == OWMHCR_POLL_01)
+// polling complement bits in searching process - first bit readed   
+	case OWM_STATE_SEARCH_POLL0 :
+		if(result <= OWMHCR_READ_1)
 		{
-		    //case 1:
-			// No discrepancy. Direction = polling bit, but check concistency
-			direction_bit = 1;
-			if (((byte_mask & m_p_ow_packet->p_ROM[byte_index]) == 0) 
-				                 && (bit_number < m_p_ow_packet->search.last_discrepancy)) // broken consistency
-				{
-					m_p_ow_packet->search.consistency_fault = true;
-					m_p_ow_packet->search.last_discrepancy = bit_number;   // Reset last_discrepancy to current position
-				}
+			poll_bit_0 = result;
+			m_ow_master_state = OWM_STATE_SEARCH_POLL1;
+			owmh_read();
 		}
-		else if(result == OWMHCR_POLL_10)
+		else if (result == OWMHCR_ERROR)
+			// incorrect signal timing on bus
+			ow_packet_terminate(OWMR_COMMUNICATION_ERROR);
+		else
+			// common logic error
+			HANDLE_ERROR();
+		break;
+//----------------------------------------------------------------------------------------------------------------	
+// polling complement bits in searching process - second bit readed   
+	case OWM_STATE_SEARCH_POLL1 :
+		critical_consistency_error = false;
+
+		if (result == OWMHCR_READ_1)
 		{
-		    //case 2:
-			// No discrepancy. Direction = polling bit, but check concistency
-			direction_bit = 0;
-			if (((byte_mask & m_p_ow_packet->p_ROM[byte_index]) == 1) 
-				                 && (bit_number < m_p_ow_packet->search.last_discrepancy)) // broken consistency
+			if (poll_bit_0 == 1)
+			{
+				// poll bits 1 1 (3)
+				if((bit_number == 1)&&(m_p_ow_packet->ROM_command == OWM_CMD_ALARM_SEARCH))
+					// No response at first polling in alarm searching 
+					ow_packet_terminate(OWMR_NOT_FOUND);   //OWMR_NO_ALARMED_DEVICES
+				else
+				{
+					// No response at any other cases. Wrong situation. Termination of search route
+					m_p_ow_packet->search.consistency_fault = true;
+					critical_consistency_error = true;
+					//ow_packet_terminate(OWMR_SEARCH_CONSISTENCY_FAULT);
+					break;
+				}
+			}
+			else
+			{
+				// poll bits 1 0 (2)
+				// No discrepancy. Direction = polling bit, but check concistency
+				direction_bit = 0;
+				if (((byte_mask & m_p_ow_packet->p_ROM[byte_index]) == 1) 
+					                 && (bit_number < m_p_ow_packet->search.last_discrepancy)) // broken consistency
 				{
 					m_p_ow_packet->search.consistency_fault = true;
 					critical_consistency_error = true;
 					//m_p_ow_packet->result = OWMR_SEARCH_CONSISTENCY_FAULT;
 				}
-		}
-		else if(result == OWMHCR_POLL_11)
-		{
-			//case 3:
-			if ((bit_number == 1)&&(m_p_ow_packet->ROM_command == OWM_CMD_ALARM_SEARCH))
-				// No response at first polling in alarm searching 
-				ow_packet_terminate(OWMR_NOT_FOUND);  //OWMR_NO_ALARMED_DEVICES
-			else
-			{
-				// No response at any other cases. Wrong situation. Termination of search route
-				m_p_ow_packet->search.consistency_fault = true;
-				critical_consistency_error = true;
-				//ow_packet_terminate(OWMR_SEARCH_CONSISTENCY_FAULT);
-				break;
 			}
 		}
-		else if(result == OWMHCR_POLL_00)
+		else if (result == OWMHCR_READ_0)
 		{
-		    //case 0:
-			// Discrepancy detected.
-			if(bit_number == m_p_ow_packet->search.last_discrepancy)
+			if (poll_bit_0 == 1)
 			{
-				// Last discrepancy position. Direction = 1	
+				// poll bits 0 1 (1)
+				// No discrepancy. Direction = polling bit, but check concistency
 				direction_bit = 1;
-			} 
-			else if(bit_number < m_p_ow_packet->search.last_discrepancy)
-			{
-				// Index less than last discrepancy. Get direction from saved ROM					
-				direction_bit = byte_mask & m_p_ow_packet->p_ROM[byte_index];
-			} 
+				if (((byte_mask & m_p_ow_packet->p_ROM[byte_index]) == 0) 
+					                 && (bit_number < m_p_ow_packet->search.last_discrepancy)) // broken consistency
+				{
+					m_p_ow_packet->search.consistency_fault = true;
+					m_p_ow_packet->search.last_discrepancy = bit_number;    // Reset last_discrepancy to current position
+				}
+			}
 			else
 			{
-				// Index after last discrepancy. Direction = 0				
-				direction_bit = 0;
-			}
-			if (!direction_bit)
-			{
-				last_zero = bit_number;  // Save last turn to direction 0
-				if (!byte_index)
-					last_family_zero = bit_number; // Save last turn to direction 0 in device family code (first byte in ROM)
+				// poll bits 0 0 (0)
+				// Discrepancy detected.
+				if(bit_number == m_p_ow_packet->search.last_discrepancy)
+				{
+					// Last discrepancy position. Direction = 1	
+					direction_bit = 1;
+				} 
+				else if(bit_number < m_p_ow_packet->search.last_discrepancy)
+				{
+					// Index less than last discrepancy. Get direction from saved ROM					
+					direction_bit = byte_mask & m_p_ow_packet->p_ROM[byte_index];
+				} 
+				else
+				{
+					// Index after last discrepancy. Direction = 0				
+					direction_bit = 0;
+				}
+				if (!direction_bit)
+				{
+					last_zero = bit_number;   // Save last turn to direction 0
+					if(!byte_index)
+						last_family_zero = bit_number;  // Save last turn to direction 0 in device family code (first byte in ROM)
+				}
 			}
 		}
 		else
@@ -454,8 +473,8 @@ static void owm_fsm(owmh_callback_result_t result)
 		else
 		{
 			// Poll next complement bits
-			m_ow_master_state = OWM_STATE_SEARCH_POLL;
-			owmh_poll();
+			m_ow_master_state = OWM_STATE_SEARCH_POLL0;
+			owmh_read();
 		}
 		break;
 		//----------------------------------------------------------------------------------------------------------------	

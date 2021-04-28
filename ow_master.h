@@ -8,21 +8,39 @@ extern "C" {
 #include "ow_config.h"	
 #include "ow_packet.h"	
 	
-// 1-wire master callback function. Registering by higher level module, invoking after transfer completion.
-// Result of completed transfer and ptr to packet struct passes in callback parameters 
+// 1-wire master callback function. Registering by higher level module, invoking after 
+// transfer completion. Result of operation and ptr to packet passes in callback parameters. 
 typedef void(*ow_master_callback_t)(ow_result_t result, ow_packet_t* p_ow_packet);
 
-// 1-WIRE master initialization
-// Higher level module register callback, wich invoking after transfer completion.
+/** 
+ * @brief 1-Wire master driver initialization. 
+ *
+ * Initializer of HAL module invoks in the process.
+ *
+ * @param callback callback provided by higher level module.
+ */
 void ow_master_initialize(ow_master_callback_t callback);
 
-// 1-WIRE master deinitialization
-// If success, 0 returning. If driver is busy, 1 returning.
+/**
+ * @brief  1-Wire master driver uninitialization.
+ * 
+ * Initializer of HAL module invoks in the process.
+ * 
+ * @retval 0 success.
+ * @retval 1 driver is busy.
+*/
 uint32_t ow_master_uninitialize();
 
-// Launch 1-WIRE packet transfer. After transfer completion callback invokes.
-// Thread unsafe function. Must be called by manager module, which provide thread safe workflow.
-// Ptr to packet struct passes in function parameter. Description of packet structure in ow_packet.h
+/**
+ * @brief Processing 1-wire packet
+ * 
+ * Launchs 1-WIRE packet processing. After completion registered callback invokes.
+ * 
+ * @warning Thread unsafe function. Must be called by higher level manager module,
+ * which provide thread safe workflow.
+ *
+ * @param p_ow_packet  packet to process (ptr to)
+ */
 void ow_process_packet(ow_packet_t* p_ow_packet);
 
 // crc8 utility functions.

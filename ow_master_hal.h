@@ -11,40 +11,37 @@ extern "C" {
 	
 #include "ow_config.h"	
 	
-// Result of 1 WIRE HAL primitives, passing in callback parameter
+/**
+ * Result of 1 WIRE HAL operation, passing in callback parameter
+ */
 typedef enum
 {
-	OWMHCR_READ_0     = 0x00,		// readed bit 0
-	OWMHCR_READ_1     = 0x01,		// readed bit 1
+	OWMHCR_READ_0     = 0x00,    /**< 0 readed                                               */
+	OWMHCR_READ_1     = 0x01,    /**< 1 readed                                               */
 	
-#ifdef OW_ROM_SEARCH_SUPPORT
-	OWMHCR_POLL_00,					// in polling procedure readed bits 0, 0
-	OWMHCR_POLL_01,					// in polling procedure readed bits 0, 1
-	OWMHCR_POLL_10,					// in polling procedure readed bits 1, 0
-	OWMHCR_POLL_11,					// in polling procedure readed bits 1, 1
-#endif
+	OWMHCR_RESET_OK,             /**< in reset procedure responce detected                   */
+	OWMHCR_RESET_NO_RESPONCE,    /**< no response detected in reset procedure                */
 	
-	OWMHCR_RESET_OK,				// in reset procedure devices on bus detected
-	OWMHCR_RESET_NO_RESPONCE,		// no response of remote devices in reset procedure
-	
-	OWMHCR_WRITE_OK,				// succesful writeing
-	OWMHCR_PACKET_OK,				// succesful transfer
+	OWMHCR_WRITE_OK,             /**< successful bit writing                                 */
+	OWMHCR_SEQUENCE_OK,          /**< successful sequence transfer                           */
 
-	OWMHCR_WAIT_OK,					// simple delay completed without errors
-	OWMHCR_FLAG_OK,					// flag read before timeout reached
-	OWMHCR_TIME_OUT,				// flag not read before timeout reached
+	OWMHCR_WAIT_OK,              /**< simple delay completed without errors                  */
+	OWMHCR_FLAG_OK,              /**< flag read before time-out reached                      */
+	OWMHCR_TIME_OUT,             /**< flag not read before time-out reached                  */
 	
-	OWMHCR_ERROR					// incorrect signal timing on bus was detected
+	OWMHCR_ERROR                 /**< incorrect signal timing on bus was detected            */
 } owmh_callback_result_t;
 
 // --------------------------------------------------------------------------------------------
 
+// 1-wire master HAL callback function. Registering by ow_master module, invoking after 
+// HAL operation completion. Result of operation passes in callback parameter. 
 typedef void(*owmh_callback_t)(owmh_callback_result_t result);
 
 /**
  * @brief 1 WIRE HAL initialization. 
  *
- * hardware and variables initialization.
+ * @param callback  callback invoking after HAL operation completed.
  */
 void owm_hal_initialize(owmh_callback_t callback);
 
@@ -52,14 +49,17 @@ void owm_hal_initialize(owmh_callback_t callback);
  * @brief 1 WIRE HAL uninitialization. 
  *
  * Releasing hardware resources.
+ *   
+ * @retval 0 success.
+ * @retval 1 driver is busy.
  */
-	uint32_t owm_hal_uninitialize(void);
+uint32_t owm_hal_uninitialize(void);
 
 #if (defined (OW_MULTI_CHANNEL))
 /**
- * @brief 1 WIRE channel setting. 
+ * @brief 1-wire active channel establishing. 
  *
- * Hardware reinitialization for defined channel.
+ * Hardware reinitialization for active channel changing.
  */
 void ow_set_channel(uint8_t channel);
 #endif
@@ -94,41 +94,35 @@ void owmh_write(uint8_t bit);
  */
 void owmh_read(void);
 
-#ifdef OW_ROM_SEARCH_SUPPORT
-	/**
- * @brief Reading of two complement bits in searching process. 
- *
- * Result in callback parameter respectively: 
- *       OWMHCR_POLL_00 / OWMHCR_POLL_01 / OWMHCR_POLL_10 / OWMHCR_POLL_11
- * If incorrect timing on bus detected, callback parameter = OWMHCR_ERROR
- */
-void owmh_poll(void);
-#endif
-
 /**
- * @brief Continuous 1-WIRE transfer.
+ * @brief Continuous 1-wire transfer.
  *
  * Transmitting tx_count bits from txdata, then resiving rx_count bits to rxdata 
- * If success, result in callback parameter OWMHCR_XFER_OK
+ * If success, result in callback parameter OWMHCR_SEQUENCE_OK
  * If errors are detected, callback parameter = OWMHCR_ERROR
  */
 void owmh_sequence(uint8_t* p_txdata, uint8_t* p_rxdata, uint8_t  tx_count, uint8_t  rx_count);
 
 /**
- * @brief Bit reading repeatedly untill "1" readed. Gap betwin readings - 1ms. 
+ * @brief Waiting for ready flag. 
  *
- * Limit time in parameter uint16_t max_wait_ms (microseconds)
- * If flag detected before time out, result OWMHCR_FLAG_OK,
- * else OWMHCR_TIME_OUT
- * If incorrect timing on bus detected, callback parameter = OWMHCR_ERROR
+ * Reading repeatedly untill "1" readed or time-out reached. 
+ * Gap betwin readings - 1ms. 
+ * If ready flag detected before time out, result in callback
+ * parameter OWMHCR_FLAG_OK, else OWMHCR_TIME_OUT
+ * If incorrect timing on bus detected, result - OWMHCR_ERROR
+ *
+ * @param time_out_ms  time-out delay value in microseconds.
  */
-void owmh_wait_flag(uint16_t max_wait_ms);
+void owmh_wait_flag(uint16_t time_out_ms);
 
 /**
- * @brief Delay delay_ms in microseconds. 
+ * @brief Simple delay. 
  *
- * Limit time in parameter uint16_t max_wait_ms (microseconds)
- * If no errors detected, result OWMHCR_WAIT_OK
+ * If no errors detected, result in callback parameter OWMHCR_WAIT_OK
+ * If incorrect timing on bus detected, result - OWMHCR_ERROR
+ * 
+ * @param delay_ms  delay value in microseconds.
  */
 void owmh_delay(uint16_t delay_ms);
 	
@@ -136,11 +130,13 @@ void owmh_delay(uint16_t delay_ms);
 /**
  * @brief Hold power.
  *
- * In case of 2 wire connection, hold continuous 
- * power for period delay_ms in microseconds.
+ * Reconfiguring pins for continuous power supplying
+ * through data line in case of parasite powering.
  * If no errors detected, result OWMHCR_WAIT_OK
- */
-	void owmh_hold_power(uint16_t delay_ms);
+ * 
+ * @param delay_ms  duration in microseconds.
+*/
+void owmh_hold_power(uint16_t delay_ms);
 #endif
 
 #ifdef __cplusplus

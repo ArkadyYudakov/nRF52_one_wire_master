@@ -15,11 +15,15 @@
 #include "ow_master.h"
 #include "ow_manager.h"
 
+
+/**
+ * 1-wire manager states
+ */
 typedef enum
 {
-	OWMM_STATE_NOT_INITIALIZED,
-	OWMM_STATE_IDLE,
-	OWMM_STATE_BUSY
+	OWMM_STATE_NOT_INITIALIZED,           //*< Driver in non-working state until initialized       */
+	OWMM_STATE_IDLE,                      //*< Idle. Queue is empty.                                */
+	OWMM_STATE_BUSY                       //*< Busy. i-wire packet under processing.               */
 } owmm_state_t;
 
 static owmm_state_t		  m_manager_state = OWMM_STATE_NOT_INITIALIZED;
@@ -72,12 +76,7 @@ static __INLINE uint32_t fifo_length(void)
 		return (fifo_write_pos - fifo_read_pos);
 }
 
-// Thread safe way to perform 1-wire transaction. Application modules puts packets in quew.
-// 1-wire manager sequentially takes packets from queue and pass for execution to ow_master
-// After packet transfer completion, manager invoks packet callback. If callback function
-// returns not 0, manager reexecutes transferring. So, application module can perform
-// continuous transferring of several packets modifying current packet and returning 1 from 
-// packet callback.  
+// Put packet into queue if other packet already under processing. if not, process directly.
 void ow_enqueue_packet(ow_packet_t* p_ow_packet)
 {
 	CHECK_ERROR_BOOL(m_manager_state != OWMM_STATE_NOT_INITIALIZED);

@@ -10,15 +10,23 @@ extern "C" {
 
 #define OW_MANAGER_FIFO_SIZE 16
 			
-// 1-WIRE manager initialization
-// sequential initializing of ow_master and ow_master_hal modules performs
+/**
+ * @brief 1 WIRE manager initialization. 
+ * 
+ * Sequential initializing of ow_master and HAL modules performs
+ * in the process
+ */
 void ow_manager_initialize(void);
 	
-// 1-WIRE master deinitialization
-// If success, 0 returns. If driver is busy, 1 returns.
+/**
+ * @brief  1-Wire manager uninitialization.
+ * 
+ * @retval 0 success.
+ * @retval 1 driver is busy.
+*/
 uint32_t ow_manager_uninitialize(void);
 
-// Thread safe way to perform 1-wire transaction. Application modules puts packets in quew.
+// Thread safe way to perform 1-wire transaction. Application modules puts packets in queue.
 // 1-wire manager sequentially takes packets from queue and pass for execution to ow_master
 // After packet processing completion, manager invoks packet callback. If callback function
 // returns not 0, manager reexecutes transferring. So, application module can perform

@@ -11,7 +11,7 @@
 
 #include "ow_master_hal.h"
 
-// OW hal machine states
+// OW master HAL states
 typedef enum
 {
 	OWMHS_IDLE,
@@ -22,9 +22,7 @@ typedef enum
 	OWMHS_WRITE1,
 
 	OWMHS_SEQUENCE,
-#ifdef OW_ROM_SEARCH_SUPPORT
-	OWMHS_POLL,
-#endif
+
 	OWMHS_READ_FLAG,
 	OWMHS_FLAG_PAUSE,
 	OWMHS_DELAY,
@@ -37,34 +35,34 @@ typedef enum
 
 #define DELAY_MKS(delay_microseconds) ((delay_microseconds)*16)
 
-#define OW_READ_PULSE			DELAY_MKS(5)
-#define OW_WRITE1_PULSE			OW_READ_PULSE 
-#define OW_WRITE0_PULSE			DELAY_MKS(60)
-#define OW_RESET_PULSE			DELAY_MKS(600)
+#define OW_READ_PULSE           DELAY_MKS(5)
+#define OW_WRITE1_PULSE         OW_READ_PULSE 
+#define OW_WRITE0_PULSE         DELAY_MKS(60)
+#define OW_RESET_PULSE          DELAY_MKS(600)
 
-#define OW_WRITE_TIMESLOT_DELAY	DELAY_MKS(70)
-#define OW_READ_TIMESLOT_DELAY	DELAY_MKS(100)
-#define OW_RESET_DELAY			DELAY_MKS(600+300)
+#define OW_WRITE_TIMESLOT_DELAY DELAY_MKS(70)
+#define OW_READ_TIMESLOT_DELAY  DELAY_MKS(100)
+#define OW_RESET_DELAY          DELAY_MKS(600+300)
 
-#define OW_MILLISECOND_DELAY	DELAY_MKS(1000)
+#define OW_MILLISECOND_DELAY    DELAY_MKS(1000)
 #define OW_FLAG_PAUSE_DELAY	(OW_MILLISECOND_DELAY - OW_READ_TIMESLOT_DELAY)
 
-#define OW_READ1_BOUND			DELAY_MKS(10)
-#define OW_READ0_BOUND			DELAY_MKS(15)
-#define OW_PRESENCE_BOUND		DELAY_MKS(600+60)
+#define OW_READ1_BOUND          DELAY_MKS(10)
+#define OW_READ0_BOUND          DELAY_MKS(15)
+#define OW_PRESENCE_BOUND       DELAY_MKS(600+60)
 
 static const nrf_drv_timer_t ow_timer = NRF_DRV_TIMER_INSTANCE(OW_TIMER_INSTANCE);
 
 static nrf_ppi_channel_t m_ppi_channel_capture;
 static nrf_ppi_channel_t m_ppi_channel_strobe_end;
 
-static uint32_t			m_out_pin;
-static uint32_t			m_in_pin;
+static uint32_t         m_out_pin;
+static uint32_t         m_in_pin;
 #ifdef OW_PARASITE_POWER_SUPPORT
-static uint32_t			m_pwr_pin;
+static uint32_t         m_pwr_pin;
 #endif
 
-static owmh_callback_t	m_callback;
+static owmh_callback_t  m_callback;
 
 #ifdef OW_MULTI_CHANNEL 
 typedef struct
@@ -80,13 +78,13 @@ static const ow_channal_rec_t ow_pins[OW_CHANNEL_COUNT] = OW_PINS_ARRAY;
 #endif // (defined (OW_MULTI_CHANNEL))
 
 static volatile owmh_state_t m_state = OWMHS_NOT_INITIALIZED; 
-static uint8_t      m_tx_bit;
-static uint8_t*		m_p_tx_buf;
-static uint8_t*		m_p_rx_buf;
-static uint8_t      m_tx_count;
-static uint8_t      m_rx_count;
-static uint8_t      m_byte_mask;
-static uint16_t     m_delay_counter;
+static uint8_t    m_tx_bit;
+static uint8_t*   m_p_tx_buf;
+static uint8_t*   m_p_rx_buf;
+static uint8_t    m_tx_count;
+static uint8_t    m_rx_count;
+static uint8_t    m_byte_mask;
+static uint16_t   m_delay_counter;
 
 static void ow_timer_event_handler(nrf_timer_event_t event_type, void * p_context);
 
@@ -318,7 +316,7 @@ uint32_t owm_hal_uninitialize(void)
 #endif
 	
 	m_state = OWMHS_NOT_INITIALIZED;
-	return 0;
+	return 1;
 }
 
 #ifdef OW_MULTI_CHANNEL 
@@ -440,9 +438,6 @@ static void owmh_start(owmh_state_t state)
 		m_tx_bit = 1;
 		break;
 
-#ifdef OW_ROM_SEARCH_SUPPORT
-	case OWMHS_POLL :
-#endif
 	case OWMHS_READ:
 		pulse = OW_READ_PULSE;
 		delay = OW_READ_TIMESLOT_DELAY;
@@ -503,15 +498,6 @@ void owmh_write(uint8_t bit)
 	else
 		owmh_start(OWMHS_WRITE0);
 }
-
-#ifdef OW_ROM_SEARCH_SUPPORT
-void owmh_poll(void)
-{
-	APP_ERROR_CHECK_BOOL(m_state == OWMHS_IDLE);
-	m_rx_count = 1;
-	owmh_start(OWMHS_POLL);
-}
-#endif
 
 void owmh_sequence(uint8_t* p_txdata, uint8_t* p_rxdata, uint8_t  tx_count, uint8_t  rx_count)
 {
@@ -685,7 +671,7 @@ static void ow_timer_event_handler(nrf_timer_event_t event_type, void * p_contex
 					m_byte_mask = 1;
 				}
 				else
-					result = OWMHCR_PACKET_OK;
+					result = OWMHCR_SEQUENCE_OK;
 			}
 			break;
 		}
@@ -717,39 +703,9 @@ static void ow_timer_event_handler(nrf_timer_event_t event_type, void * p_contex
 						delay = OW_READ_TIMESLOT_DELAY;
 					}
 				else
-					result = OWMHCR_PACKET_OK;
+					result = OWMHCR_SEQUENCE_OK;
 			}
 		break;
-#ifdef OW_ROM_SEARCH_SUPPORT
-//----------------------------------------------------------------------------------------------------------------	
-	case OWMHS_POLL:
-		if ((capture_value < OW_WRITE1_PULSE) || (capture_value > (OW_READ_TIMESLOT_DELAY - 30))
-			|| ((capture_value > OW_READ1_BOUND) && (capture_value < OW_READ0_BOUND)))
-		{
-			result = OWMHCR_ERROR;
-		}
-		else
-		{
-			if (m_rx_count != 0) // First bit was resieved
-				{
-					if (capture_value > OW_READ0_BOUND)
-						bit_buf = 0;
-					else
-						bit_buf = 1;
-					m_rx_count = 0;
-					pulse = OW_WRITE1_PULSE;
-					delay = OW_READ_TIMESLOT_DELAY;
-				}			
-			else
-			{
-				// Second bit was resieved
-				result = (capture_value > OW_READ0_BOUND) ? 
-					((bit_buf) ? OWMHCR_POLL_01 : OWMHCR_POLL_00) : 
-					(bit_buf) ? OWMHCR_POLL_11 : OWMHCR_POLL_10;
-			}
-		}
-		break;
-#endif
 //----------------------------------------------------------------------------------------------------------------	
 		default: // OWMHS_IDLE, OWMHS_NOT_INITIALIZED
 			APP_ERROR_CHECK_BOOL(false);
