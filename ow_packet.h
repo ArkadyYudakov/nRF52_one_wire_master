@@ -10,6 +10,7 @@ extern "C" {
 // 1-wire ROM commands
 #define	OWM_CMD_READ            0x33    //*< reading ROM address. Device must be only one on bus */
 #define	OWM_CMD_SKIP            0xCC    //*< skip ROM address. All devices on bus addressed      */
+#define OWM_CMD_RESUME          0xA5    //*< last addressed device responds                      */
 #define	OWM_CMD_MATCH           0x55    //*< onley divice with given ROM addressed               */
 #ifdef OW_ROM_SEARCH_SUPPORT
 #define	OWM_CMD_SEARCH          0xF0    //*< address searching procedure                         */
@@ -18,7 +19,6 @@ extern "C" {
 
 //#define OWM_CMD_OVERDRIVE       = 0x3C,
 //#define OWM_CMD_MATCH_OVERDRIVE = 0x69,
-//#define OWM_CMD_RESUME          = 0xA5
 
 // 1-wire data struct
 typedef struct
@@ -57,7 +57,7 @@ typedef enum
 
 // Callback function of 1-wire packet. Invoks after packet processed by 1-wire controlling module.
 // Result and ptr to processed packet passes in callback parameters. 
-// Higher level module, wich enque given packet, can instantly continue 1-wire activiti by 
+// Higher level module, wich enqueue given packet, can instantly continue 1-wire activiti by 
 // modifying packet in callback function and returning 1 from callback function. Packet will be
 // retransmitted instead of the next packet from queue.
 typedef uint32_t(*ow_packet_callback_t)(ow_result_t result, void* p_ow_packet);

@@ -49,7 +49,7 @@ static void owm_default_callback(ow_result_t  result, ow_packet_t* p_packet)
 }	
 
 // forward declaration.
-static void owm_fsm(owmh_callback_result_t result);
+static void owm_on_hal_op_completed(owmh_callback_result_t result);
 
 //1-Wire master driver initialization. 
 void ow_master_initialize(ow_master_callback_t callback)
@@ -61,7 +61,7 @@ void ow_master_initialize(ow_master_callback_t callback)
 	else
 		m_callback = owm_default_callback;
 	
-	owm_hal_initialize(owm_fsm);
+	owm_hal_initialize(owm_on_hal_op_completed);
 	m_ow_master_state = OWM_STATE_IDLE;
 }
 
@@ -102,7 +102,7 @@ static void ow_packet_terminate(ow_result_t result)
 
 // 1-Wire master driver state machine procedure.
 // Invoking as callback after completion of 1-wire HAL operation
-static void owm_fsm(owmh_callback_result_t result)
+static void owm_on_hal_op_completed(owmh_callback_result_t result)
 {
 #ifdef OW_ROM_SEARCH_SUPPORT
 	// variables for searching process
@@ -153,6 +153,7 @@ static void owm_fsm(owmh_callback_result_t result)
 				break;
 		
 			case OWM_CMD_SKIP:
+			case OWM_CMD_RESUME:
 				// skip ROM address transmitting. Send data immediately
 				m_ow_master_state = OWM_STATE_DATA;
 				owmh_sequence(m_p_ow_packet->data.p_txbuf,
@@ -189,6 +190,7 @@ static void owm_fsm(owmh_callback_result_t result)
 				}
 				break;
 #endif
+				
 			default: 
 				// common logic error
 				HANDLE_ERROR();
