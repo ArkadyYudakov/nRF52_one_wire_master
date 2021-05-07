@@ -2,7 +2,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// platform dependant
+// platform dependent
 #include "app_util_platform.h"	
 #include "app_util.h"
 #define  _CRITICAL_REGION_ENTER()     CRITICAL_REGION_ENTER()
@@ -10,7 +10,7 @@
 #define  _IS_POWER_OF_TWO(int_value)  IS_POWER_OF_TWO(int_value)
 #include "app_error.h"
 #define  CHECK_ERROR_BOOL( bool_expresion ) APP_ERROR_CHECK_BOOL( bool_expresion )
-// end of platform dependant section
+// end of platform dependent section
 
 #include "ow_master.h"
 #include "ow_manager.h"
@@ -22,7 +22,7 @@
 typedef enum
 {
 	OWMM_STATE_NOT_INITIALIZED,           //*< Driver in non-working state until initialized       */
-	OWMM_STATE_IDLE,                      //*< Idle. Queue is empty.                                */
+	OWMM_STATE_IDLE,                      //*< Idle. Queue is empty.                               */
 	OWMM_STATE_BUSY                       //*< Busy. i-wire packet under processing.               */
 } owmm_state_t;
 
@@ -57,13 +57,13 @@ uint32_t ow_manager_uninitialize(void)
 {
 	uint32_t result = 1;
 	
-	_CRITICAL_REGION_ENTER()
+	_CRITICAL_REGION_ENTER();
 	if((m_manager_state == OWMM_STATE_IDLE)&&(ow_master_uninitialize() == 0))
 	{
 		m_manager_state = OWMM_STATE_NOT_INITIALIZED;
 		result = 0;
 	}
-	_CRITICAL_REGION_EXIT()
+	_CRITICAL_REGION_EXIT();
 	return result;
 }
 
@@ -85,7 +85,7 @@ void ow_enqueue_packet(ow_packet_t* p_ow_packet)
 	bool	launch_packet	= false;
 	
 	// thread safe buffer handling in critical section	
-	_CRITICAL_REGION_ENTER()
+	_CRITICAL_REGION_ENTER();
 	if(m_manager_state == OWMM_STATE_IDLE)
 	{
 		// manager in idle, buffer is empty. Pass packet for processing directly
@@ -104,7 +104,7 @@ void ow_enqueue_packet(ow_packet_t* p_ow_packet)
 			++fifo_write_pos;			
 		}
 	}
-	_CRITICAL_REGION_EXIT()
+	_CRITICAL_REGION_EXIT();
 	// after leaving of critical section check errors and send packet for processing
 	APP_ERROR_CHECK_BOOL(!buffer_overflow);
 	if(launch_packet) ow_process_packet(p_ow_packet);
@@ -124,7 +124,7 @@ void ow_manager_callback(ow_result_t  result, ow_packet_t* p_ow_packet)
 	else
 	{
 		// thread safe buffer handling in critical section 
-		_CRITICAL_REGION_ENTER()
+		_CRITICAL_REGION_ENTER();
 		if(fifo_write_pos != fifo_read_pos)
 		{
 			// buffer is not empty. Take next packet
@@ -134,7 +134,7 @@ void ow_manager_callback(ow_result_t  result, ow_packet_t* p_ow_packet)
 		else
 			// buffer is empty. Go to idle state.
 			m_manager_state = OWMM_STATE_IDLE;	
-		_CRITICAL_REGION_EXIT()
+		_CRITICAL_REGION_EXIT();
 		// after leaving of critical section send packet for processing
 		if(p_next_packet)
 		{

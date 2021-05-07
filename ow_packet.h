@@ -1,6 +1,9 @@
 #ifndef	OW_PACKET_H__
 #define OW_PACKET_H__
 
+#include <stdbool.h>
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -55,25 +58,39 @@ typedef enum
 	OWMR_COMMUNICATION_ERROR,             //*< incorrect signal timing on bus was detected       */
 } ow_result_t;
 
+typedef union
+{
+	uint8_t raw[8];
+	struct
+	{
+		uint8_t family;
+		uint8_t serial[6];
+		uint8_t crc8;
+	};
+} ROM_code_t;
+
 // Callback function of 1-wire packet. Invoks after packet processed by 1-wire controlling module.
 // Result and ptr to processed packet passes in callback parameters. 
 // Higher level module, wich enqueue given packet, can instantly continue 1-wire activiti by 
 // modifying packet in callback function and returning 1 from callback function. Packet will be
 // retransmitted instead of the next packet from queue.
-typedef uint32_t(*ow_packet_callback_t)(ow_result_t result, void* p_ow_packet);
+typedef struct ow_packet_t ow_packet_t;
+typedef uint32_t(*ow_packet_callback_t)(ow_result_t result, ow_packet_t* p_ow_packet);
+//typedef uint32_t(*ow_packet_callback_t)(ow_result_t result, void* p_ow_packet);
   
 /**
  * 1-wire packet struct
  */
-typedef struct
+typedef struct ow_packet_t
 {
 	ow_packet_callback_t callback;      //*< packet callback. Invoked after transfer completion  */
 	void*                p_context;     //*< context for given transfer packet                   */
-	uint8_t*             p_ROM;         //*< ptr to 8 byte ROM address                           */
+	ROM_code_t*          p_ROM_code;    //*< ptr to 8 byte ROM address                           */
 	uint8_t              ROM_command;   //*< ROM command (first byte of 1-wire transfer)         */
-//#if (defined (OW_MULTI_CHANNEL))
+#if (defined (OW_MULTI_CHANNEL))
 	uint8_t              channel;       //*< 1-wire channel for this packet                      */
-	//#endif // 
+#endif
+	uint16_t delay_ms;                    //*< delay in milliseconds for hold power, wait flag   */
 	struct
 	{
 		uint8_t          wait_flag  : 1;  //*< if 1, flag waiting procedure will be performed    */
@@ -88,7 +105,6 @@ typedef struct
 		ow_search_data_t search;          //*< struct for searching process parameters           */
 #endif
 	};
-	uint16_t delay_ms;                    //*< delay in milliseconds for hold power, wait flag   */
 } ow_packet_t;                            //*< and simple delay procedures                       */
 
 // crc8 utility functions. Defined in ow_master.c	

@@ -2,11 +2,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// platform dependant
+// platform dependent
 #include "app_error.h"
 #define  CHECK_ERROR_BOOL( bool_expresion ) APP_ERROR_CHECK_BOOL( bool_expresion )
 #define  HANDLE_ERROR() APP_ERROR_CHECK_BOOL( false )
-// end of platform dependant section
+// end of platform dependent section
 
 #include "ow_master_hal.h"	
 #include "ow_master.h"
@@ -149,7 +149,7 @@ static void owm_on_hal_op_completed(owmh_callback_result_t result)
 			case OWM_CMD_READ:
 				// read 8 bit ROM adress
 				m_ow_master_state = OWM_STATE_DATA;
-				owmh_sequence(NULL, (uint8_t*)(m_p_ow_packet->p_ROM), 0, 64);
+				owmh_sequence(NULL, (uint8_t*)(m_p_ow_packet->p_ROM_code), 0, 64);
 				break;
 		
 			case OWM_CMD_SKIP:
@@ -165,7 +165,7 @@ static void owm_on_hal_op_completed(owmh_callback_result_t result)
 			case OWM_CMD_MATCH:
 				// transfer 8 bit ROM address
 				m_ow_master_state = OWM_STATE_ROM;
-				owmh_sequence((uint8_t*)(m_p_ow_packet->p_ROM), NULL, 64, 0);
+				owmh_sequence((uint8_t*)(m_p_ow_packet->p_ROM_code), NULL, 64, 0);
 				break;
 		
 #ifdef OW_ROM_SEARCH_SUPPORT
@@ -365,7 +365,7 @@ static void owm_on_hal_op_completed(owmh_callback_result_t result)
 				// poll bits 1 0 (2)
 				// No discrepancy. Direction = polling bit, but check concistency
 				direction_bit = 0;
-				if (((byte_mask & m_p_ow_packet->p_ROM[byte_index]) == 1) 
+				if (((byte_mask & m_p_ow_packet->p_ROM_code->raw[byte_index]) == 1) 
 					                 && (bit_number < m_p_ow_packet->search.last_discrepancy)) // broken consistency
 				{
 					m_p_ow_packet->search.consistency_fault = true;
@@ -381,7 +381,7 @@ static void owm_on_hal_op_completed(owmh_callback_result_t result)
 				// poll bits 0 1 (1)
 				// No discrepancy. Direction = polling bit, but check concistency
 				direction_bit = 1;
-				if (((byte_mask & m_p_ow_packet->p_ROM[byte_index]) == 0) 
+				if (((byte_mask & m_p_ow_packet->p_ROM_code->raw[byte_index]) == 0) 
 					                 && (bit_number < m_p_ow_packet->search.last_discrepancy)) // broken consistency
 				{
 					m_p_ow_packet->search.consistency_fault = true;
@@ -400,7 +400,7 @@ static void owm_on_hal_op_completed(owmh_callback_result_t result)
 				else if(bit_number < m_p_ow_packet->search.last_discrepancy)
 				{
 					// Index less than last discrepancy. Get direction from saved ROM					
-					direction_bit = byte_mask & m_p_ow_packet->p_ROM[byte_index];
+					direction_bit = byte_mask & m_p_ow_packet->p_ROM_code->raw[byte_index];
 				} 
 				else
 				{
@@ -428,9 +428,9 @@ static void owm_on_hal_op_completed(owmh_callback_result_t result)
 		{
 			// Save direction in ROM
 			if(direction_bit)
-				m_p_ow_packet->p_ROM[byte_index] |= byte_mask;   // Set bit in ROM
+				m_p_ow_packet->p_ROM_code->raw[byte_index] |= byte_mask;   // Set bit in ROM
 			else
-				m_p_ow_packet->p_ROM[byte_index] &= (~byte_mask);   // Clear bit in ROM
+				m_p_ow_packet->p_ROM_code->raw[byte_index] &= (~byte_mask);   // Clear bit in ROM
 			
 			// Transmit direction bit
 			m_ow_master_state = OWM_STATE_SEARCH_DIR;
@@ -440,7 +440,7 @@ static void owm_on_hal_op_completed(owmh_callback_result_t result)
 			if(byte_mask == 0x80)
 			{
 				// Calculate and save CRC
-				docrc8(&crc8, m_p_ow_packet->p_ROM[byte_index]);
+				docrc8(&crc8, m_p_ow_packet->p_ROM_code->raw[byte_index]);
 				// Reset mask, shift byte index
 				byte_mask = 0x01;
 				++byte_index;
@@ -465,7 +465,7 @@ static void owm_on_hal_op_completed(owmh_callback_result_t result)
 		if(bit_number > 64) // all bits are routed
 		{
 			// Check CRC
-			if(!crc8)
+			if(crc8 != 0)
 				// Wrong CRC
 				ow_packet_terminate(OWMR_COMMUNICATION_ERROR);
 			else

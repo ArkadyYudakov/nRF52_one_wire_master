@@ -35,21 +35,24 @@ typedef enum
 
 #define DELAY_MKS(delay_microseconds) ((delay_microseconds)*16)
 
-#define OW_READ_PULSE           DELAY_MKS(5)
-#define OW_WRITE1_PULSE         OW_READ_PULSE 
-#define OW_WRITE0_PULSE         DELAY_MKS(60)
-#define OW_RESET_PULSE          DELAY_MKS(600)
+#define OW_READ_PULSE			DELAY_MKS(5)
+#define OW_WRITE1_PULSE			OW_READ_PULSE 
+#define OW_WRITE0_PULSE			DELAY_MKS(60)
+#define OW_RESET_PULSE			DELAY_MKS(600)
 
-#define OW_WRITE_TIMESLOT_DELAY DELAY_MKS(70)
-#define OW_READ_TIMESLOT_DELAY  DELAY_MKS(100)
-#define OW_RESET_DELAY          DELAY_MKS(600+300)
+#define OW_WRITE1_PULSE_TOLERANCE	DELAY_MKS(2)
+#define OW_WRITE0_PULSE_TOLERANCE	DELAY_MKS(2)
 
-#define OW_MILLISECOND_DELAY    DELAY_MKS(1000)
+#define OW_WRITE_TIMESLOT_DELAY	DELAY_MKS(70)
+#define OW_READ_TIMESLOT_DELAY	DELAY_MKS(100)
+#define OW_RESET_DELAY			DELAY_MKS(600+300)
+
+#define OW_MILLISECOND_DELAY	DELAY_MKS(1000)
 #define OW_FLAG_PAUSE_DELAY	(OW_MILLISECOND_DELAY - OW_READ_TIMESLOT_DELAY)
 
-#define OW_READ1_BOUND          DELAY_MKS(10)
-#define OW_READ0_BOUND          DELAY_MKS(15)
-#define OW_PRESENCE_BOUND       DELAY_MKS(600+60)
+#define OW_READ1_BOUND			DELAY_MKS(10)
+#define OW_READ0_BOUND			DELAY_MKS(15)
+#define OW_PRESENCE_BOUND		DELAY_MKS(600+60)
 
 static const nrf_drv_timer_t ow_timer = NRF_DRV_TIMER_INSTANCE(OW_TIMER_INSTANCE);
 
@@ -336,7 +339,6 @@ void ow_set_channel(uint8_t channel)
 #ifdef OW_PARASITE_POWER_SUPPORT
 static void ow_power_on()
 {
-//	nrf_gpio_pin_clear(14);
 #ifdef OW_DEDICATED_POWER_PIN
 #if (defined (OW_POWER_PIN_ACTIVE_STATE)&&(OW_POWER_PIN_ACTIVE_STATE == 1))
 	nrf_gpio_pin_set(m_pwr_pin);
@@ -353,14 +355,11 @@ static void ow_power_on()
 		NRF_GPIO_PIN_NOPULL,
 		NRF_GPIO_PIN_D0H1,
 		NRF_GPIO_PIN_NOSENSE);
-
-	nrf_gpio_pin_clear(14);
 #endif
 }
 
 static void ow_power_off()
 {
-//	nrf_gpio_pin_set(14);
 #ifdef OW_DEDICATED_POWER_PIN
 #if (defined (OW_POWER_PIN_ACTIVE_STATE)&&(OW_POWER_PIN_ACTIVE_STATE == 1))
 	nrf_gpio_pin_clear(m_pwr_pin);
@@ -381,8 +380,6 @@ static void ow_power_off()
 		nrf_drv_gpiote_set_task_addr_get(m_out_pin)));
 	APP_ERROR_CHECK(nrf_drv_ppi_channel_enable(m_ppi_channel_strobe_end));
 	nrf_drv_gpiote_out_task_enable(m_out_pin);
-	
-	nrf_gpio_pin_set(14);
 #endif
 }
 #endif // (defined (OW_PARASITE_POWER_SUPPORT))
@@ -457,8 +454,6 @@ static void owmh_start(owmh_state_t state)
 		break;
 
 	case OWMHS_DELAY:
-		nrf_gpio_pin_clear(14);
-		
 		pulse = OW_MILLISECOND_DELAY + 10;
 		delay = OW_MILLISECOND_DELAY;
 		break;
@@ -515,7 +510,6 @@ void owmh_wait_flag(uint16_t max_wait_ms)
 {
 	APP_ERROR_CHECK_BOOL(m_state == OWMHS_IDLE);
 	m_delay_counter = max_wait_ms;
-	nrf_gpio_pin_clear(14);
 	owmh_start(OWMHS_READ_FLAG);
 }
 
@@ -591,7 +585,6 @@ static void ow_timer_event_handler(nrf_timer_event_t event_type, void * p_contex
 			delay = OW_MILLISECOND_DELAY;
 		}
 		else 
-			nrf_gpio_pin_set(14);
 			result = OWMHCR_WAIT_OK;
 		break;
 //----------------------------------------------------------------------------------------------------------------	
@@ -614,7 +607,6 @@ static void ow_timer_event_handler(nrf_timer_event_t event_type, void * p_contex
 			result = OWMHCR_ERROR;
 		else if (capture_value < OW_READ1_BOUND)
 		{
-			nrf_gpio_pin_set(14);
 			result = OWMHCR_FLAG_OK;
 		}
 		else if (m_delay_counter > 0)
@@ -625,7 +617,6 @@ static void ow_timer_event_handler(nrf_timer_event_t event_type, void * p_contex
 		}
 		else
 		{
-			nrf_gpio_pin_set(14);
 			result = OWMHCR_TIME_OUT;
 		}
 		break;
@@ -641,8 +632,8 @@ static void ow_timer_event_handler(nrf_timer_event_t event_type, void * p_contex
 		if(m_tx_count > 0) // bit was transmitted
 		{
 			// Check if transmitted byte is not corrupted
-			if(((m_tx_bit)&&((capture_value < OW_WRITE1_PULSE) || (capture_value > (OW_WRITE_TIMESLOT_DELAY - 30))))
-					|| ((!m_tx_bit)&&((capture_value < OW_WRITE0_PULSE) || (capture_value > (OW_WRITE0_PULSE + 15)))))
+			if(((m_tx_bit)&&((capture_value < OW_WRITE1_PULSE) || (capture_value > (OW_WRITE1_PULSE + OW_WRITE1_PULSE_TOLERANCE))))
+					|| ((!m_tx_bit)&&((capture_value < OW_WRITE0_PULSE) || (capture_value > (OW_WRITE0_PULSE + OW_WRITE0_PULSE_TOLERANCE)))))
 			{
 				result = OWMHCR_ERROR;
 				break;

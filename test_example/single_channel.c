@@ -18,7 +18,7 @@
 #include "ow_search_helpers.h"
 #include "ds18b20.h"
 
-#ifdef OW_MULTI_CHANNEL
+#ifndef OW_MULTI_CHANNEL
 
 //----------------------------------------------------------------------------------------------
 
@@ -34,13 +34,6 @@
 
 APP_TIMER_DEF(delay_timer);
 
-typedef struct ow_channel_t
-{
-	u_int8_t sensors_count;
-	bool     single_family;
-	bool     parasite_power;
-} ow_channel_t;
-
 typedef enum scan_mode_t
 {
 	SEPARATE_CONVERT_READ,
@@ -49,17 +42,19 @@ typedef enum scan_mode_t
 }scan_mode_t;
 
 scan_mode_t			m_scan_mode;
+static bool         m_single_family;
+static bool         m_parasite_power;
+
 static uint8_t      m_sensors_count;
-static uint8_t      m_channel_index;
 static uint8_t      m_sensor_index;
 static ds18b20_t    m_sensors[SENSORS_MAX_COUNT];
-static ow_channel_t m_channels[OW_CHANNEL_COUNT];
 static ow_packet_t  m_ow_packet;
 static ROM_code_t   m_ROMcode;
 static ROM_code_t   m_ROMcode_test;
 static uint8_t      m_scans_counter = 0;
 
 //----------------------------------------------------------------------------------------------
+
 #define ENCODE_TEMPR(msb, lsb) (msb * 16 + lsb * 16 / 100)
 
 static void log_hex(void* ptr, uint8_t length)
@@ -70,15 +65,16 @@ static void log_hex(void* ptr, uint8_t length)
 		LOG_PRINTF("%02X ", byte);
 	}
 }
-//----------------------------------------------------------------------------------------------
 
+//----------------------------------------------------------------------------------------------
 static void read_next();
 static void start_convertion_next();
+//static void start_conversion_all();
+bool	m_reading_finished;
 bool	m_conversion_finished;
 
 //----------------------------------------------------------------------------------------------
 // ds18b20 sensor reading result handling.
-
 static void reading_ds18b20_callback(ds18b20_t* p_ds18b20)
 {
 	if (p_ds18b20->result == SUCCESS)
@@ -112,7 +108,6 @@ static void reading_ds18b20_callback(ds18b20_t* p_ds18b20)
 	}
 	read_next(); 
 }
-
 
 static void read_next() 
 {
@@ -174,8 +169,7 @@ static void read_next()
 	{
 		// In the middle of series. Reading next sensor.
 		LOG_PRINTF("\n         - "); log_hex(&m_sensors[m_sensor_index].ROM_code.serial, 6);
-		LOG_PRINTF(": #%i, PP %i, SR %i.", 
-			m_sensors[m_sensor_index].channel,
+		LOG_PRINTF(": PP %i, SR %i.", 
 			m_sensors[m_sensor_index].parasite_powered, 
 			m_sensors[m_sensor_index].skip_ROM_code );
 		switch (m_scan_mode)
@@ -200,14 +194,10 @@ static void delay_timer_on_time_out_callback(void * p_context)
 {
 	// Initiate sensors reading series
 	LOG_PRINTF("\n\n*    Reading...");
-//	m_reading_finished = false;
+	m_reading_finished = false;
 	m_sensor_index  = 0;
 	read_next();
 }
-
-//----------------------------------------------------------------------------------------------
-static void start_convertion_next();
-bool	m_conversion_finished;
 
 //----------------------------------------------------------------------------------------------
 // ds18b20 sensor callback after conversion start (or completion in some cases).
@@ -243,16 +233,16 @@ static void start_convertion_ds18b20_callback(ds18b20_t* p_ds18b20)
 uint32_t start_convertion_ow_callback(ow_result_t result, ow_packet_t* p_ow_packet)
 {
 	if (result != OWMR_SUCCESS)
-	{
-		LOG_PRINTF("\n         - ERROR detected while groupe convert command sending!");
+	{ 
+		LOG_PRINTF("\n         - ERROR detected while groupe convert command sending!"); 
 	}
 	else if((p_ow_packet->delay_ms > 0)&&(
 #ifdef OW_PARASITE_POWER_SUPPORT
 		(p_ow_packet->hold_power)||
 #endif
 		(p_ow_packet->wait_flag)))
-	{
-		LOG_PRINTF(" Conversion completed.");
+	{ 
+		LOG_PRINTF(" Conversion completed."); 
 	}
 
 	if (m_conversion_finished)
@@ -260,7 +250,6 @@ uint32_t start_convertion_ow_callback(ow_result_t result, ow_packet_t* p_ow_pack
 		m_sensor_index = 0;
 		// Delay 1 sec. before sensors reading.
 		app_timer_start(delay_timer, DELAY_BETWEEN_SCANS, NULL);
-		LOG_PRINTF("\n");
 	}
 	else
 		start_convertion_next();
@@ -269,30 +258,28 @@ uint32_t start_convertion_ow_callback(ow_result_t result, ow_packet_t* p_ow_pack
 
 static void start_convertion_next()
 {
-	uint8_t channel_index = m_sensors[m_sensor_index].channel;
-	
-	if ((m_channels[channel_index].single_family)&&(m_channels[channel_index].sensors_count > 1))
+	if (m_single_family&&(m_sensors_count > 1))
 	{
 		// No devices of other types on bus. Group command can be done
-		ds18b20_start_conversion_all(channel_index,
+		ds18b20_start_conversion_all(
 			start_convertion_ow_callback,
 #ifdef OW_PARASITE_POWER_SUPPORT
-			(m_channels[channel_index].parasite_power ? OW_HOLD_POWER : OW_NOT_WAIT),
+			(m_parasite_power ? OW_HOLD_POWER : OW_NOT_WAIT),
 #else
 			OW_NOT_WAIT,
 #endif
 			DS18B20_RESOL);
-		LOG_PRINTF("\n         - Groupe conversion command on channel #%i", channel_index);
-		if (m_channels[channel_index].parasite_power)
+		LOG_PRINTF("\n         - Groupe conversion command.");
+		if (m_parasite_power)
 		{
 			LOG_PRINTF(" Hold power delay...");
 		}
 		else
 		{
-			LOG_PRINTF(" No delay.");
+			LOG_PRINTF(" No delay..");
 		}
-		// Skip sensors with same channel. 
-		m_sensor_index += m_channels[channel_index].sensors_count;
+		// Signal for ow packet callback to initiate reading fase.
+		m_conversion_finished = true;
 	}
 	else
 	{
@@ -300,7 +287,7 @@ static void start_convertion_next()
 		ds18b20_start_conversion(&m_sensors[m_sensor_index], start_convertion_ds18b20_callback);
 		LOG_PRINTF("\n         - "); log_hex(&m_sensors[m_sensor_index].ROM_code.serial, 6);
 		LOG_PRINTF(": conversion started. ");
-		if (m_channels[channel_index].parasite_power)
+		if (m_sensors[m_sensor_index].parasite_powered)
 		{
 			LOG_PRINTF("Hold power delay...");
 		}
@@ -324,13 +311,11 @@ static void start_convertion_next()
 	{
 		// Signal for ds18b20 callback to initiate reading fase.
 		m_conversion_finished = true;
-		return;
 	}
 }
 
 //----------------------------------------------------------------------------------------------
 static void start_discovering();
-static void discover_next(bool first_on_channel);
 static uint32_t discovering_ow_callback(ow_result_t result, ow_packet_t* p_ow_packet);
 
 bool	m_sensor_instantiated = false;
@@ -350,12 +335,14 @@ static void start_polling()
 // ds18b20 sensor initializing result handling.
 static void initializing_ds18b20_callback(ds18b20_t* p_ds18b20)
 {
-	// Mark channel if parasite powered device present. 
+	// Remember parasite powered device present. 
 	if (p_ds18b20->parasite_powered)
-		m_channels[p_ds18b20->channel].parasite_power = true;
+		m_parasite_power = true;
 	// If it is last discovered device, initiate scanning.
 	if(m_discovering_completed)
+	{
 		start_polling();
+	}
 }
 
 // Handling result of ROM code reading command.
@@ -373,22 +360,11 @@ uint32_t reading_ROM_ow_callback(ow_result_t result, ow_packet_t* p_ow_packet)
 		{
 			LOG_PRINTF("\n         - Read ROM command test failed!");
 		}
-		// restore ow packet
-		p_ow_packet->callback = discovering_ow_callback;
-		p_ow_packet->p_ROM_code = &m_ROMcode;
-		// continue with interrupted discovering workflow
-		if (++m_channel_index < OW_CHANNEL_COUNT)
-			// Start discovering new channel
-			discover_next(true);
-		else
-		{
-			// OW discovering completed. Initiate sensors scanning
-			start_polling();
-		}
+		start_polling();
 		break;
 
 	case OWMR_COMMUNICATION_ERROR:
-		LOG_PRINTF("\n!!! Communication error while read ROM command testing!", m_channel_index);
+		LOG_PRINTF("\n!!! Communication error while read ROM command testing!");
 		LOG_PRINTF("\n!!! Discovering  restarted!");
 		start_discovering();
 		break;
@@ -408,16 +384,15 @@ static uint32_t discovering_ow_callback(ow_result_t result, ow_packet_t* p_ow_pa
 		if (m_ROMcode.family == DS18B20_FAMILY)
 		{
 			// ds18b20 discovered
-			++m_channels[m_channel_index].sensors_count;
 			if (m_sensors_count < SENSORS_MAX_COUNT)
 			{
 				LOG_PRINTF("\n\n      ds18b20 discovered, serial = ");  log_hex(&m_ROMcode.serial, 6);
 				LOG_PRINTF("\n         - Local object initialized.");
 				ds18b20_t* p_sensor = &m_sensors[m_sensors_count];
 #ifdef OW_PARASITE_POWER_SUPPORT
-				ds18b20_initialize(p_sensor, m_channel_index, DS18B20_RESOL, DS18B20_POWER); 
+				ds18b20_initialize(p_sensor, DS18B20_RESOL, DS18B20_POWER); 
 #else
-				ds18b20_initialize(p_sensor, m_channel_index, DS18B20_RESOL); 
+				ds18b20_initialize(p_sensor, DS18B20_RESOL); 
 #endif
 				ds18b20_set_ROM_code(p_sensor, &m_ROMcode);
 				ds18b20_sincronize(p_sensor, initializing_ds18b20_callback);
@@ -433,17 +408,17 @@ static uint32_t discovering_ow_callback(ow_result_t result, ow_packet_t* p_ow_pa
 		}
 		else
 		{
-			// Device of other then ds18b20 family discovered. Mark channel as not safe for group commands.
+			// Device of other then ds18b20 family discovered. Remember that group commands are not safe.
 			LOG_PRINTF("\n\n      Device other then ds18b20 discovered, family = %02x", m_ROMcode.family);
-			m_channels[m_channel_index].single_family = false;
+			m_single_family = false;
 		}
 		
-		//  Go to next channel if last device on channel discovered. If last channel - finish discovering.
+		//  Go to next device. If last, finish discovering.
 		if (p_ow_packet->search.last_device)
 		{
-			// Last device on channel discovered.
+			// Last device discovered.
 			// if single sensor on bas - choose skip ROMcode mode permanently
-			if((m_channels[m_channel_index].sensors_count == 1)&&(m_channels[m_channel_index].single_family)
+			if((m_sensors_count == 1)&&(m_single_family)
 					&&m_sensor_instantiated)
 			{
 				m_sensors[m_sensor_index].skip_ROM_code = true;
@@ -454,49 +429,33 @@ static uint32_t discovering_ow_callback(ow_result_t result, ow_packet_t* p_ow_pa
 				ow_read_ROM_code(p_ow_packet);
 				break;
 			}
-			// Go to next channel or terminate discovering.
-			if (++m_channel_index < OW_CHANNEL_COUNT)
-				// Start discovering new channel
-				discover_next(true);
-			else
+			// OW discovering completed. Initiate sensors scanning
+			if(m_sensor_instantiated)
+				m_discovering_completed = true; // start_conversion();
+			else if(m_sensors_count == 0)
 			{
-				// OW discovering completed. Initiate sensors scanning
-				if(m_sensor_instantiated)
-				{
-					m_discovering_completed = true; // start_conversion();
-				}
-				else if(m_sensors_count == 0)
-				{
-					LOG_PRINTF("\n!!! No ds18b20 sensors was discovered! Restart programm.");
-				}
-				else
-					start_polling();
+				LOG_PRINTF("\n!!! No ds18b20 sensors was discovered! Restart programm.");
 			}
+			else
+				start_polling();
 			break;
 		}
 		else
-			discover_next(false);
+			ow_search_next(&m_ow_packet, false);
 		break;
 		
 	case OWMR_NO_RESPONSE:
-		LOG_PRINTF("\n        No devices found on channel #%i", m_channel_index);
-		// go to next channel
-		if (++m_channel_index < OW_CHANNEL_COUNT)
-			// Start discovering new channel
-			discover_next(true);
-		else
-			// OW discovering completed. Initiate sensors scanning
-			start_polling();
+		LOG_PRINTF("\n!!! No devices on 1-wire bus! Restart programm.");
 		break;
 		
 	case OWMR_SEARCH_CONSISTENCY_FAULT:
-		LOG_PRINTF("\n!!! Logical error while discovering on channel %i detected! ", m_channel_index);
+		LOG_PRINTF("\n!!! Logical error while discovering detected! ");
 		LOG_PRINTF("\n!!! Discovering restarted!");
 		start_discovering();
 		break;
 
 	case OWMR_COMMUNICATION_ERROR:
-		LOG_PRINTF("\n!!! Communication error while discovering on channel %i detected!", m_channel_index);
+		LOG_PRINTF("\n!!! Communication error while discovering on channel detected!");
 		LOG_PRINTF("\n!!! Discovering  restarted!");
 		start_discovering();
 		break;
@@ -506,28 +465,16 @@ static uint32_t discovering_ow_callback(ow_result_t result, ow_packet_t* p_ow_pa
 	return 0;
 }
 
-static void discover_next(bool first_on_channel)
-{
-	if (first_on_channel)
-	{
-		m_ow_packet.channel = m_channel_index;
-		m_channels[m_channel_index].sensors_count = 0;
-		m_channels[m_channel_index].single_family = true;
-		m_channels[m_channel_index].parasite_power = false;
-		ow_search_first(&m_ow_packet, false);
-	}
-	else
-		ow_search_next(&m_ow_packet, false);
-}
-
 static void start_discovering()
 {
-	m_sensors_count = 0;
-	m_channel_index = 0;
 	m_ow_packet.p_ROM_code = &m_ROMcode;
 	m_ow_packet.callback  = discovering_ow_callback;
+
+	m_sensors_count = 0;
+	m_single_family = true;
+	m_parasite_power = false;
 	
-	discover_next(true);
+	ow_search_first(&m_ow_packet, false);
 }
 
 void start_ow_test()

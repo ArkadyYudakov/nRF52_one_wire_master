@@ -1,7 +1,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// platform dependant
+// platform dependent
 #include "app_error.h"
 #define  CHECK_ERROR_BOOL( bool_expresion ) APP_ERROR_CHECK_BOOL( bool_expresion )
 #define  HANDLE_ERROR() APP_ERROR_CHECK_BOOL( false )
@@ -9,16 +9,16 @@
 #include "nrf_log.h"
 #include "nrf_log_ctrl.h"
 #include "nrf_log_default_backends.h"
-// end of platform dependant section
+#define  LOG_PRINTF NRF_LOG_RAW_INFO
+// end of platform dependent section
 
-#include "bc_scheduler.h"
 #include "ds18b20.h"
 
 static uint32_t on_ow_transfer_completed(ow_result_t  result, ow_packet_t* p_ow_packet); 
 static void prepare_ow_packet(ds18b20_t* p_self, ds18b20_command_t command);
 static void send_command(ds18b20_t* p_self, ds18b20_command_t command, ds18b20_callback_t callback);
 
-static uint8_t  m_command = CMD_TEMP_CONVERT;
+static uint8_t convert_command = CMD_TEMP_CONVERT;
 static ow_packet_t  m_ow_packet = { .ROM_command = OWM_CMD_SKIP };
 
 static void log_hex(void* ptr, uint8_t length)
@@ -26,23 +26,43 @@ static void log_hex(void* ptr, uint8_t length)
 	for (int i = 0; i < length; ++i)
 	{
 		uint8_t byte = *(uint8_t*)(ptr + i);
-		NRF_LOG_RAW_INFO("%x ", byte);
+		LOG_PRINTF("%x ", byte);
 	}
 }
 
-//-------------------------------------------------------------------------------------------------
-#ifdef DS18B20_PARASITE_POWER_SUPPORT
+static uint16_t waiting_delay(ds18b20_resolution_t resolution)
+{
+	uint16_t result;
+	switch (resolution)
+	{
+	case RES_12_BIT:
+		result  = 750;
+		break;
+	case RES_11_BIT:
+		result  = 375;
+		break;
+	case RES_10_BIT:
+		result  = 190;
+		break;
+	case RES_9_BIT:
+		result  = 95;
+	}
+	return result;
+}
+//----------------------------------------- configuring -------------------------------------------
+
+#ifdef OW_PARASITE_POWER_SUPPORT
 #ifdef OW_MULTI_CHANNEL
 void ds18b20_initialize(ds18b20_t* p_self, uint8_t channel, ds18b20_resolution_t resolution, 
 		                                   ds18b20_power_config_t power_config)
-#elif
+#else
 void ds18b20_initialize(ds18b20_t* p_self, ds18b20_resolution_t resolution, 
 		                                   ds18b20_power_config_t power_config)
 #endif
-#elif
+#else
 #ifdef OW_MULTI_CHANNEL
 void ds18b20_initialize(ds18b20_t* p_self, uint8_t channel, ds18b20_resolution_t resolution)
-#elif
+#else
 void ds18b20_initialize(ds18b20_t* p_self, ds18b20_resolution_t resolution)
 #endif	
 #endif	
@@ -62,7 +82,7 @@ void ds18b20_initialize(ds18b20_t* p_self, ds18b20_resolution_t resolution)
 	p_self->channel = channel;
 	p_self->ow_packet.channel = channel;
 #endif 
-#ifdef DS18B20_PARASITE_POWER_SUPPORT
+#ifdef OW_PARASITE_POWER_SUPPORT
 	if (power_config == POWER_PARASITE)
 		p_self->parasite_powered = true;
 	if (power_config == POWER_CHECK)
@@ -70,15 +90,29 @@ void ds18b20_initialize(ds18b20_t* p_self, ds18b20_resolution_t resolution)
 #endif
 	p_self->ow_packet.callback = on_ow_transfer_completed;
 	p_self->ow_packet.p_context = p_self;
-	p_self->ow_packet.p_ROMcode = &p_self->ROMcode;
-//	p_self->ow_packet.ROM_command = OWM_CMD_SKIP;
+	p_self->ow_packet.p_ROM_code = &p_self->ROM_code;
 }
 
-void ds18b20_set_ROMcode(ds18b20_t* p_self, ROMcode_t* p_ROMcode)
+void ds18b20_set_ROM_code(ds18b20_t* p_self, ROM_code_t* p_ROM_code)
 {
-	memcpy(&p_self->ROMcode, p_ROMcode, sizeof(ROMcode_t));
-	p_self->ow_packet.ROM_command = (p_ROMcode->family ? OWM_CMD_MATCH : OWM_CMD_SKIP);
+	memcpy(&p_self->ROM_code, p_ROM_code, sizeof(ROM_code_t));
+	p_self->ow_packet.ROM_command = (p_ROM_code->family ? OWM_CMD_MATCH : OWM_CMD_SKIP);
 }
+
+void ds18b20_skip_ROM_code(ds18b20_t* p_self, bool skip_ROM_code)
+{
+	p_self->skip_ROM_code = skip_ROM_code;
+}
+
+void ds18b20_set_waiting_mode(ds18b20_t* p_self, ds18b20_waiting_t waiting_mode)
+{
+#ifdef OW_PARASITE_POWER_SUPPORT
+	if(waiting_mode == OW_HOLD_POWER)
+		HANDLE_ERROR();
+#endif
+	p_self->waiting_mode = waiting_mode;
+}
+
 
 #ifdef DS18B20_ALARM_TEMPR_SUPPORT
 void ds18b20_set_alarm_tempr(ds18b20_t* p_self, int8_t low_tempr, int8_t high_tempr)
@@ -87,20 +121,19 @@ void ds18b20_set_alarm_tempr(ds18b20_t* p_self, int8_t low_tempr, int8_t high_te
 	p_self->high_tempr = high_tempr;
 }
 #endif
-void ds18b20_skip_ROMcode(ds18b20_t* p_self, bool skip_ROM_permanent)
+//----------------------------------------- commands ----------------------------------------------
+
+void ds18b20_sincronize(ds18b20_t* p_self, ds18b20_callback_t callback)
 {
-	p_self->skip_ROM_perm = skip_ROM_permanent;
-}
-	
-//-------------------------------------------------------------------------------------------------
-void ds18b20_sinc_config(ds18b20_t* p_self, ds18b20_callback_t callback)
-{
-	p_self->ow_packet.delay_ms  = 0;
+	p_self->convert_after_read = false;
+	p_self->read_after_convert = false;
+#ifdef OW_PARASITE_POWER_SUPPORT
 	if (p_self->check_power)
 	{
 		send_command(p_self, CMD_POWER_SUPPLY_READ, callback);
-		}
+	}
 	else
+#endif
 	{
 		send_command(p_self, CMD_CONFIG_READ, callback);
 	}
@@ -108,7 +141,8 @@ void ds18b20_sinc_config(ds18b20_t* p_self, ds18b20_callback_t callback)
 
 void ds18b20_start_conversion(ds18b20_t* p_self, ds18b20_callback_t callback)
 {
-//	p_self->skip_ROM_once = true;
+	p_self->convert_after_read = false;
+	p_self->read_after_convert = false;
 	send_command(p_self, CMD_TEMP_CONVERT, callback);
 }
 
@@ -116,91 +150,94 @@ void ds18b20_start_conversion(ds18b20_t* p_self, ds18b20_callback_t callback)
 void ds18b20_start_conversion_all(uint8_t channel, ow_packet_callback_t callback, 
 								ds18b20_waiting_t waiting_mode, ds18b20_resolution_t resolution) {
 	m_ow_packet.channel = channel;
-#elif 
+#else 
 void ds18b20_start_conversion_all(ow_packet_callback_t callback, 
 								ds18b20_waiting_t waiting_mode, ds18b20_resolution_t resolution) {
 #endif
 	m_ow_packet.callback = callback;
 	m_ow_packet.delay_ms  = 0;
 	m_ow_packet.wait_flag = false;
-#ifdef DS18B20_PARASITE_POWER_SUPPORT
+#ifdef OW_PARASITE_POWER_SUPPORT
 	m_ow_packet.hold_power = false;
 #endif
 	
 	if (waiting_mode != OW_NOT_WAIT)
 	{
-		switch (resolution)
-		{
-		case RES_12_BIT:
-			m_ow_packet.delay_ms  = 750;
-			break;
-		case RES_11_BIT:
-			m_ow_packet.delay_ms  = 375;
-			break;
-		case RES_10_BIT:
-			m_ow_packet.delay_ms  = 190;
-			break;
-		case RES_9_BIT:
-			m_ow_packet.delay_ms  = 95;
-		}
+		m_ow_packet.delay_ms = waiting_delay(resolution);
 		
 		if(waiting_mode == OW_WAIT_FLAG)
 			m_ow_packet.wait_flag = true;
 
-#ifdef DS18B20_PARASITE_POWER_SUPPORT
+#ifdef OW_PARASITE_POWER_SUPPORT
 		if(waiting_mode == OW_HOLD_POWER)
 			m_ow_packet.hold_power = true;
 #endif
 	}
 
-	m_ow_packet.data.p_txbuf  = &m_command;
+	m_ow_packet.data.p_txbuf  = &convert_command;
 	m_ow_packet.data.tx_count = 8;
 	m_ow_packet.data.rx_count = 0;
 									
 	ow_enqueue_packet(&m_ow_packet);
 }
 
-void ds18b20_read_fast(ds18b20_t* p_self, ds18b20_callback_t callback, bool start_conversion)
+void ds18b20_read_fast(ds18b20_t* p_self, ds18b20_callback_t callback)
 {
-	p_self->convert_after_read = start_conversion;
+	p_self->convert_after_read = false;
+	p_self->read_after_convert = false;
 	send_command(p_self, CMD_TEMP_READ_FAST, callback);
 }
 
-void ds18b20_read_safe(ds18b20_t* p_self, ds18b20_callback_t callback, bool start_conversion)
+void ds18b20_read_safe(ds18b20_t* p_self, ds18b20_callback_t callback)
 {
-	p_self->convert_after_read = start_conversion;
+	p_self->convert_after_read = false;
+	p_self->read_after_convert = false;
 	send_command(p_self, CMD_TEMP_READ_SAFE, callback);
 }
 
-//-------------------------------------------------------------------------------------------------
+void ds18b20_convert_and_read(ds18b20_t* p_self, ds18b20_callback_t callback)
+{
+	p_self->convert_after_read = false;
+	p_self->read_after_convert = true;
+	send_command(p_self, CMD_TEMP_CONVERT, callback);
+}
+
+void ds18b20_read_and_convert(ds18b20_t* p_self, ds18b20_callback_t callback)
+{
+	p_self->convert_after_read = true;
+	p_self->read_after_convert = false;
+	send_command(p_self, CMD_TEMP_READ_SAFE, callback);
+}
+
+//------------------------------------ under the hood ---------------------------------------------
+									
 static void send_command(ds18b20_t* p_self, ds18b20_command_t command, ds18b20_callback_t callback)
 {
-	APP_ERROR_CHECK_BOOL(p_self->command == CMD_IDLE);
+	CHECK_ERROR_BOOL(p_self->command == CMD_IDLE);
 	p_self->command = command;
 	p_self->callback = callback;
 	prepare_ow_packet(p_self, command);
 	ow_enqueue_packet(&(p_self->ow_packet));
 }
-static void prepare_ow_packet(ds18b20_t* p_self, ds18b20_command_t command /*, bool skip_ROMcode*/)
+static void prepare_ow_packet(ds18b20_t* p_self, ds18b20_command_t command)
 {
-	uint8_t*		p_buf	= p_self->databuffer;
+	uint8_t*		  p_buf	    = p_self->databuffer;
 	ow_packet_data_t* p_data	= &(p_self->ow_packet.data);
 		
 	*p_buf = (uint8_t)command;
 	
-	if ((p_self->skip_ROM_once) || (p_self->ROMcode.family == 0) /*|| (p_self->skip_ROM_perm)*/)
+	if ((p_self->skip_ROM_code) || (p_self->ROM_code.family == 0))
 	{
 		p_self->ow_packet.ROM_command = OWM_CMD_SKIP;
-//		p_self->skip_ROM_once = false;
 	}
 	else
-		p_self->ow_packet.ROM_command = OWM_CMD_MATCH; // OWM_CMD_MATCH OWM_CMD_SKIP
+		p_self->ow_packet.ROM_command = OWM_CMD_MATCH;
 	
-	p_self->ow_packet.delay_ms  = 0;
-	p_self->ow_packet.wait_flag = p_self->wait_ready_flag;
-#ifdef DS18B20_PARASITE_POWER_SUPPORT
+#ifdef OW_PARASITE_POWER_SUPPORT
 	p_self->ow_packet.hold_power = p_self->parasite_powered;
 #endif
+	p_self->ow_packet.wait_flag = ((p_self->waiting_mode == OW_WAIT_FLAG)||(p_self->read_after_convert));
+	p_self->ow_packet.delay_ms  = 0;
 	
 	switch (command)
 	{
@@ -223,19 +260,13 @@ static void prepare_ow_packet(ds18b20_t* p_self, ds18b20_command_t command /*, b
 		break;
 		
 	case CMD_TEMP_CONVERT:
-		switch (p_self->resolution)
+		if ((p_self->read_after_convert)
+#ifdef OW_PARASITE_POWER_SUPPORT
+			|| (p_self->parasite_powered)	
+#endif
+			|| ((p_self->waiting_mode != OW_NOT_WAIT)&&(!p_self->convert_after_read)))
 		{
-		case RES_12_BIT:
-			p_self->ow_packet.delay_ms  = 750;
-			break;
-		case RES_11_BIT:
-			p_self->ow_packet.delay_ms  = 375;
-			break;
-		case RES_10_BIT:
-			p_self->ow_packet.delay_ms  = 190;
-			break;
-		case RES_9_BIT:
-			p_self->ow_packet.delay_ms  = 95;
+			p_self->ow_packet.delay_ms = waiting_delay(p_self->resolution);
 		}
 		p_data->p_txbuf = p_buf;
 		p_data->tx_count = 8;
@@ -243,7 +274,10 @@ static void prepare_ow_packet(ds18b20_t* p_self, ds18b20_command_t command /*, b
 		break;
 	
 	case CMD_EEPROM_WRITE:
-		p_self->ow_packet.delay_ms  = 10;
+#ifdef OW_PARASITE_POWER_SUPPORT
+		if(p_self->parasite_powered) 
+			p_self->ow_packet.delay_ms  = 10;
+#endif
 		p_data->p_txbuf = p_buf;
 		p_data->tx_count = 8;
 		p_data->rx_count = 0;
@@ -258,6 +292,7 @@ static void prepare_ow_packet(ds18b20_t* p_self, ds18b20_command_t command /*, b
 		p_data->rx_count = 0;
 		break;
 		
+#ifdef OW_PARASITE_POWER_SUPPORT
 	case CMD_POWER_SUPPLY_READ:
 		p_data->p_txbuf = p_buf;
 		p_data->tx_count = 8;
@@ -266,6 +301,7 @@ static void prepare_ow_packet(ds18b20_t* p_self, ds18b20_command_t command /*, b
 		p_data->p_rxbuf = p_buf + 1;
 		p_data->rx_count = 1;
 		break;
+#endif
 	
 	default:
 		// common logic error
@@ -303,7 +339,7 @@ static uint32_t on_ow_transfer_completed(ow_result_t  result, ow_packet_t* p_ow_
 			break;
 			
 		default:
-			APP_ERROR_CHECK_BOOL(false);
+			HANDLE_ERROR();
 		}
 		break;
 		
@@ -311,23 +347,23 @@ static uint32_t on_ow_transfer_completed(ow_result_t  result, ow_packet_t* p_ow_
 		switch (p_self->command)
 		{
 		case CMD_CONFIG_WRITE:
-			NRF_LOG_RAW_INFO("\n         - Config written to remote device and verified");
+			LOG_PRINTF("\n         - Config written to remote device and verified");
 			p_self->scratchpad_writed = true;
 			command  = CMD_CONFIG_READ;
 			packet_restart = true;
 			break;
 		case CMD_CONFIG_READ:
-			NRF_LOG_RAW_INFO("\n         - Scratchpad readed "); 
+			LOG_PRINTF("\n         - Scratchpad readed "); 
 			log_hex(p_self->databuffer + 1, 8);
 			
 			if (!checkcrc8(p_self->databuffer[9], p_self->databuffer + 1, 8))
 			{
-				NRF_LOG_INFO("!!! COMMUNICATION_ERROR! Crc8 check faled!");
+				LOG_PRINTF("\n         - ERROR! Crc8 check faled!"); 
 				op_result = COMMUNICATION_ERROR;
 			}
 			else if (!p_self->databuffer[5])
 			{
-				NRF_LOG_INFO("!!! DEVICE_NOT_FOUND! ???");
+				LOG_PRINTF("\n         - ERROR! Device not found!"); 
 				op_result = DEVICE_NOT_FOUND;
 			}
 			else if ((p_self->databuffer[5] != (uint8_t)p_self->resolution)
@@ -339,12 +375,12 @@ static uint32_t on_ow_transfer_completed(ow_result_t  result, ow_packet_t* p_ow_
 			{
 				if (p_self->scratchpad_writed)
 				{
-					NRF_LOG_INFO("!!! ERROR! Config rewriting faled!");
+					LOG_PRINTF("\n         - ERROR! Config rewriting faled!"); 
 					op_result = CONFIG_WRITING_ERROR;
 				}
 				else
 				{
-			        NRF_LOG_RAW_INFO("\n         - Remote config not matches current settings. Trying to rewrite.");
+			        LOG_PRINTF("\n         - Remote config not matches current settings. Trying to rewrite.");
 					command  = CMD_CONFIG_WRITE;
 					packet_restart = true;
 				}
@@ -356,15 +392,21 @@ static uint32_t on_ow_transfer_completed(ow_result_t  result, ow_packet_t* p_ow_
 			}
 			else
 			{
-				NRF_LOG_RAW_INFO("\n         - Remote config matches current settings.");
+				LOG_PRINTF("\n         - Remote config matches current settings.");
 			}
 			break;
 
 		case CMD_TEMP_CONVERT:
+			if (p_self->read_after_convert)
+			{
+//				LOG_PRINTF("\n         - Reading temperature after connversion completed.");
+				command  = CMD_TEMP_READ_SAFE;
+				packet_restart = true;
+			}
 			break;
 			
 		case CMD_EEPROM_WRITE:
-			NRF_LOG_RAW_INFO("\n         - Config in remote device saved to flash.");
+			LOG_PRINTF("\n         - Config in remote device saved to flash.");
 			break;
 			
 		case CMD_TEMP_READ_SAFE:
@@ -401,12 +443,14 @@ static uint32_t on_ow_transfer_completed(ow_result_t  result, ow_packet_t* p_ow_
 			}
 			break;
 		
+#ifdef OW_PARASITE_POWER_SUPPORT
 		case CMD_POWER_SUPPLY_READ:
 			p_self->parasite_powered = (*(p_self->databuffer + 1) == 0);
 			command  = CMD_CONFIG_READ;
 			packet_restart = true;
-			NRF_LOG_RAW_INFO("\n         - Remote power mode read. Parasite powered = %i", p_self->parasite_powered);
+			LOG_PRINTF("\n         - Remote power mode read. Parasite powered = %i", p_self->parasite_powered);
 			break;
+#endif
 
 		default:
 			// common logic error
@@ -423,14 +467,13 @@ static uint32_t on_ow_transfer_completed(ow_result_t  result, ow_packet_t* p_ow_
 		HANDLE_ERROR();
 	}
 	
-	if (!packet_restart && p_self->callback)
-	{
-		//p_self->callback(p_self);
-		bc_handover_to((void(*)(void*))(p_self->callback), p_self);
-	}
-	
 	p_self->result = op_result;
 	p_self->command  = command;
 
+	if (!packet_restart && p_self->callback)
+	{
+		p_self->callback(p_self);
+	}
+	
 	return packet_restart;
 }

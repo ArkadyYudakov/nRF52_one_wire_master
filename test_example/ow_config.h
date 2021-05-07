@@ -15,10 +15,10 @@
 #define OW_ROM_SEARCH_SUPPORT
 
 // if not defined, driver functions for parasite power support excluded
-#define OW_PARASITE_POWER_SUPPORT
+//#define OW_PARASITE_POWER_SUPPORT
 
 // if defined, separated pin used for power forcing
-// else out pin configuration changes temporary
+// else out pin configuration changes temporarily
 //#define OW_DEDICATED_POWER_PIN 
 
 // active state of power pin. If not defined, default is 0 (low).
@@ -35,7 +35,7 @@
 // { { IN0,  OUT0, PWR0 }, { IN1,  OUT1, PWR1 }, { IN2,  OUT2, PWR2 } }
 // example for 2 channels without dedicated power pin
 // { { IN0,  OUT0 }, { IN1,  OUT1 } }        
-#define OW_PINS_ARRAY  { { 4,  5 }, { 2,  3 } }
+#define OW_PINS_ARRAY  { { 2,  3 },{ 4,  5 }  }
 #else
 // 1-wire pins config
 #define OW_OUT_PIN  2
