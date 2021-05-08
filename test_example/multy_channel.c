@@ -198,6 +198,7 @@ static void read_next()
 //----------------------------------------------------------------------------------------------
 static void delay_timer_on_time_out_callback(void * p_context)
 {
+	UNUSED_PARAMETER(p_context);	
 	// Initiate sensors reading series
 	LOG_PRINTF("\n\n*    Reading...");
 //	m_reading_finished = false;
@@ -361,7 +362,6 @@ static void initializing_ds18b20_callback(ds18b20_t* p_ds18b20)
 // Handling result of ROM code reading command.
 uint32_t reading_ROM_ow_callback(ow_result_t result, ow_packet_t* p_ow_packet)
 {
-	int success;
 	switch (result)
 	{
 	case OWMR_SUCCESS:

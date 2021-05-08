@@ -61,7 +61,7 @@ static nrf_ppi_channel_t m_ppi_channel_strobe_end;
 
 static uint32_t         m_out_pin;
 static uint32_t         m_in_pin;
-#ifdef OW_PARASITE_POWER_SUPPORT
+#if ((defined (OW_PARASITE_POWER_SUPPORT)) && (defined (OW_DEDICATED_POWER_PIN)))
 static uint32_t         m_pwr_pin;
 #endif
 
@@ -90,8 +90,6 @@ static uint8_t    m_byte_mask;
 static uint16_t   m_delay_counter;
 
 static void ow_timer_event_handler(nrf_timer_event_t event_type, void * p_context);
-
-static void owmh_handler(void);
 
 static const nrf_drv_gpiote_out_config_t ow_gpiote_out_config =
 {
@@ -241,6 +239,8 @@ void owm_hal_initialize(owmh_callback_t callback)
 	m_state = OWMHS_IDLE;
 }
 
+
+#ifdef OW_MULTI_CHANNEL
 #if ((defined (OW_PARASITE_POWER_SUPPORT)) && (defined (OW_DEDICATED_POWER_PIN)))
 uint32_t owmh_ow_change_pins(uint32_t out_pin, uint32_t in_pin, uint32_t pwr_pin)
 #else
@@ -284,6 +284,7 @@ static uint32_t owmh_ow_change_pins(uint32_t out_pin, uint32_t in_pin)
 	m_state = OWMHS_IDLE;
 	return 0;
 }
+#endif
 	
 uint32_t owm_hal_uninitialize(void)
 {
@@ -407,8 +408,8 @@ static void owmh_continue(uint32_t pulse, uint32_t delay)
 
 static void owmh_start(owmh_state_t state)
 {
-	uint32_t pulse; 
-	uint32_t delay;
+	uint32_t pulse = 0; 
+	uint32_t delay = 0;
 	
 	if (!nrf_gpio_pin_read(m_in_pin))
 	{
@@ -533,9 +534,10 @@ void owmh_hold_power(uint16_t delay_ms)
 // timer interrupt handler (on compare2)
 static void ow_timer_event_handler(nrf_timer_event_t event_type, void * p_context)
 {
-	static uint8_t bit_buf;
+	UNUSED_PARAMETER(event_type);	
+	UNUSED_PARAMETER(p_context);	
 	uint32_t capture_value;
-	owmh_callback_result_t result;
+	owmh_callback_result_t result = OWMHCR_ERROR;
 	owmh_state_t state = m_state;
 	uint32_t pulse = 0; 
 	uint32_t delay;
@@ -595,9 +597,11 @@ static void ow_timer_event_handler(nrf_timer_event_t event_type, void * p_contex
 			pulse = OW_MILLISECOND_DELAY + 10;
 			delay = OW_MILLISECOND_DELAY;
 		}
-		else 
+		else
+		{
 			ow_power_off();
 			result = OWMHCR_WAIT_OK;
+		}
 		break;
 #endif
 //----------------------------------------------------------------------------------------------------------------	

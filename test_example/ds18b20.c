@@ -32,7 +32,7 @@ static void log_hex(void* ptr, uint8_t length)
 
 static uint16_t waiting_delay(ds18b20_resolution_t resolution)
 {
-	uint16_t result;
+	uint16_t result = RES_12_BIT;
 	switch (resolution)
 	{
 	case RES_12_BIT:
