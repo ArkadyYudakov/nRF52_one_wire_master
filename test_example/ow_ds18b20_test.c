@@ -14,6 +14,7 @@ void start_ow_test();
 
 int main(void)
 {
+	NVIC_SetPriority(DebugMonitor_IRQn, 7UL);
 	APP_ERROR_CHECK(NRF_LOG_INIT(NULL));
 	NRF_LOG_DEFAULT_BACKENDS_INIT();
 	

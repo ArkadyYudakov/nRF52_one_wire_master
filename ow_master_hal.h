@@ -20,14 +20,14 @@ typedef enum
 	OWMHCR_READ_1     = 0x01,    /**< 1 readed                                               */
 	
 	OWMHCR_RESET_OK,             /**< in reset procedure responce detected                   */
-	OWMHCR_RESET_NO_RESPONCE,    /**< no response detected in reset procedure                */
+	OWMHCR_RESET_NO_RESPONCE,    /**< no response in reset procedure                         */
 	
 	OWMHCR_WRITE_OK,             /**< successful bit writing                                 */
 	OWMHCR_SEQUENCE_OK,          /**< successful sequence transfer                           */
 
 	OWMHCR_WAIT_OK,              /**< simple delay completed without errors                  */
-	OWMHCR_FLAG_OK,              /**< flag read before time-out reached                      */
-	OWMHCR_TIME_OUT,             /**< flag not read before time-out reached                  */
+	OWMHCR_FLAG_OK,              /**< ready flag read before time-out reached                */
+	OWMHCR_TIME_OUT,             /**< ready flag not read before time-out reached            */
 	
 	OWMHCR_ERROR                 /**< incorrect signal timing on bus was detected            */
 } owmh_callback_result_t;

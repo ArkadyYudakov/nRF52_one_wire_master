@@ -35,8 +35,8 @@ void ow_search_first(ow_packet_t* p_ow_packet, bool alarm)
 void ow_search_first_in_family(ow_packet_t* p_ow_packet, uint8_t family_code, bool alarm)
 {
 	// Initialise search parameters
-	p_ow_packet->p_ROM_code->raw[0] = family_code;
 	memset(p_ow_packet->p_ROM_code, 0, sizeof(ROM_code_t));
+	p_ow_packet->p_ROM_code->raw[0] = family_code;
 	p_ow_packet->search.last_device = false;
 	p_ow_packet->search.last_discrepancy = 65;
 	p_ow_packet->search.last_family_discrepancy = 0;
